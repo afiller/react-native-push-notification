@@ -27,38 +27,48 @@ import java.util.Random;
 
 public class RNPushNotification extends ReactContextBaseJavaModule implements ActivityEventListener {
     public static final String LOG_TAG = "RNPushNotification";// all logging should use this tag
-
+    
     private RNPushNotificationHelper mRNPushNotificationHelper;
     private final Random mRandomNumberGenerator = new Random(System.currentTimeMillis());
     private RNPushNotificationJsDelivery mJsDelivery;
-
+    
+    private Bundle savedBundle = null;
+    
     public RNPushNotification(ReactApplicationContext reactContext) {
         super(reactContext);
-
+        
         reactContext.addActivityEventListener(this);
-
+        
         Application applicationContext = (Application) reactContext.getApplicationContext();
         // The @ReactNative methods use this
         mRNPushNotificationHelper = new RNPushNotificationHelper(applicationContext);
         // This is used to delivery callbacks to JS
         mJsDelivery = new RNPushNotificationJsDelivery(reactContext);
-
+        
         registerNotificationsRegistration();
     }
-
+    
     @Override
     public String getName() {
         return "RNPushNotification";
     }
-
+    
     @Override
     public Map<String, Object> getConstants() {
         final Map<String, Object> constants = new HashMap<>();
-
+        
         return constants;
     }
-
+    
     public void onNewIntent(Intent intent) {
+        if(intent.hasExtra("google.message_id")){
+            Bundle bundle = intent.getExtras();
+            bundle.putBoolean("foreground", false);
+            intent.putExtra("notification", bundle);
+            this.savedBundle =  bundle;
+            mJsDelivery.notifyNotification(bundle);
+        }
+        
         if (intent.hasExtra("notification")) {
             Bundle bundle = intent.getBundleExtra("notification");
             bundle.putBoolean("foreground", false);
@@ -66,22 +76,22 @@ public class RNPushNotification extends ReactContextBaseJavaModule implements Ac
             mJsDelivery.notifyNotification(bundle);
         }
     }
-
+    
     private void registerNotificationsRegistration() {
         IntentFilter intentFilter = new IntentFilter(getReactApplicationContext().getPackageName() + ".RNPushNotificationRegisteredToken");
-
+        
         getReactApplicationContext().registerReceiver(new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
                 String token = intent.getStringExtra("token");
                 WritableMap params = Arguments.createMap();
                 params.putString("deviceToken", token);
-
+                
                 mJsDelivery.sendEvent("remoteNotificationsRegistered", params);
             }
         }, intentFilter);
     }
-
+    
     private void registerNotificationsReceiveNotificationActions(ReadableArray actions) {
         IntentFilter intentFilter = new IntentFilter();
         // Add filter for each actions.
@@ -93,10 +103,10 @@ public class RNPushNotification extends ReactContextBaseJavaModule implements Ac
             @Override
             public void onReceive(Context context, Intent intent) {
                 Bundle bundle = intent.getBundleExtra("notification");
-
+                
                 // Notify the action.
                 mJsDelivery.notifyNotificationAction(bundle);
-
+                
                 // Dismiss the notification popup.
                 NotificationManager manager = (NotificationManager) context.getSystemService(context.NOTIFICATION_SERVICE);
                 int notificationID = Integer.parseInt(bundle.getString("id"));
@@ -104,17 +114,17 @@ public class RNPushNotification extends ReactContextBaseJavaModule implements Ac
             }
         }, intentFilter);
     }
-
+    
     @ReactMethod
     public void requestPermissions(String senderID) {
         ReactContext reactContext = getReactApplicationContext();
-
+        
         Intent GCMService = new Intent(reactContext, RNPushNotificationRegistrationService.class);
-
+        
         GCMService.putExtra("senderID", senderID);
         reactContext.startService(GCMService);
     }
-
+    
     @ReactMethod
     public void presentLocalNotification(ReadableMap details) {
         Bundle bundle = Arguments.toBundle(details);
@@ -124,7 +134,7 @@ public class RNPushNotification extends ReactContextBaseJavaModule implements Ac
         }
         mRNPushNotificationHelper.sendToNotificationCentre(bundle);
     }
-
+    
     @ReactMethod
     public void scheduleLocalNotification(ReadableMap details) {
         Bundle bundle = Arguments.toBundle(details);
@@ -134,14 +144,26 @@ public class RNPushNotification extends ReactContextBaseJavaModule implements Ac
         }
         mRNPushNotificationHelper.sendNotificationScheduled(bundle);
     }
-
+    
     @ReactMethod
     public void getInitialNotification(Promise promise) {
         WritableMap params = Arguments.createMap();
         Activity activity = getCurrentActivity();
         if (activity != null) {
             Intent intent = activity.getIntent();
-            Bundle bundle = intent.getBundleExtra("notification");
+            Bundle bundle = null;
+            
+            if (intent.hasExtra("notification")) {
+                bundle = intent.getBundleExtra("notification");
+            } else if (intent.hasExtra("google.message_id")) {
+                bundle = intent.getExtras();
+            }
+            
+            if (this.savedBundle != null){
+                bundle = savedBundle;
+                this.savedBundle = null;
+            }
+            
             if (bundle != null) {
                 bundle.putBoolean("foreground", false);
                 String bundleString = mJsDelivery.convertJSON(bundle);
@@ -150,22 +172,22 @@ public class RNPushNotification extends ReactContextBaseJavaModule implements Ac
         }
         promise.resolve(params);
     }
-
+    
     @ReactMethod
     public void setApplicationIconBadgeNumber(int number) {
         ApplicationBadgeHelper.INSTANCE.setApplicationIconBadgeNumber(getReactApplicationContext(), number);
     }
-
+    
     // removed @Override temporarily just to get it working on different versions of RN
     public void onActivityResult(Activity activity, int requestCode, int resultCode, Intent data) {
         onActivityResult(requestCode, resultCode, data);
     }
-
+    
     // removed @Override temporarily just to get it working on different versions of RN
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
         // Ignored, required to implement ActivityEventListener for RN 0.33
     }
-
+    
     @ReactMethod
     /**
      * Cancels all scheduled local notifications, and removes all entries from the notification
@@ -180,7 +202,7 @@ public class RNPushNotification extends ReactContextBaseJavaModule implements Ac
         mRNPushNotificationHelper.cancelAllScheduledNotifications();
         mRNPushNotificationHelper.clearNotifications();
     }
-
+    
     @ReactMethod
     /**
      * Cancel scheduled notifications, and removes notifications from the notification centre.
@@ -193,9 +215,10 @@ public class RNPushNotification extends ReactContextBaseJavaModule implements Ac
     public void cancelLocalNotifications(ReadableMap userInfo) {
         mRNPushNotificationHelper.cancelScheduledNotification(userInfo);
     }
-
+    
     @ReactMethod
     public void registerNotificationActions(ReadableArray actions) {
         registerNotificationsReceiveNotificationActions(actions);
     }
 }
+
